@@ -1,2 +1,4 @@
+.idea
+*.z64
 /target
 **/*.rs.bk

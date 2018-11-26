@@ -15,5 +15,7 @@ fn main() {
     let initial = &BYTES[0..5000];
     let rom = Rom::from_rom(initial);
 
-    println!("{:?}", rom);
+    println!("{:?}", rom.unwrap().1);
+
+    //println!("{:?}", rom);
 }

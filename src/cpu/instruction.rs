@@ -1,5 +1,8 @@
 #[derive(Debug, Copy, Clone)]
 enum OpCode {
+    // Error
+    UNKNOWN,
+
     // Pseudo
     NOP,
     LI,
@@ -39,9 +42,16 @@ enum OpCode {
     J,
     LB,
     LWC1,
+    LH,
+    SC,
+    SCD,
+    LWL,
+    DADDI,
+    LL,
+    BLEZ,
+    SD,
 
-
-// Special
+    // Special
     SLL,
     OR,
     AND,
@@ -60,20 +70,43 @@ enum OpCode {
     MOVCI,
     DSRA32,
     MFHI,
+    SRA,
+    SYSCALL,
+    SYNC,
+    DSLL,
+    DSRL32,
 
     // COP0
     MTC0,
     MFC0,
 
+    // COP1
+    MFC1,
+
+    // COP2
+    MFC2,
+
+    // COP2 VEC
+    VNE,
+
     // REGIMM
     BGEZL,
     BGEZAL,
-    BLTZ
+    BLTZ,
+    BLTZAL,
+    TGEI
 
 }
 
 impl OpCode {
     pub fn from_word(word: u32) -> Result<OpCode, String> {
+        /*let mut word1 = 0;
+        word1 |= (word >> 24 & 0xFF) << 0;
+        word1 |= (word >> 16 & 0xFF) << 8;
+        word1 |= (word >> 8 & 0xFF) << 16;
+        word1 |= (word >> 0 & 0xFF) << 24;
+        let word = word1;*/
+
         let code = (word >> 26) as u8;
 
         match code {
@@ -99,11 +132,25 @@ impl OpCode {
             0b000010 => Ok(OpCode::J),
             0b100000 => Ok(OpCode::LB),
             0b110001 => Ok(OpCode::LWC1),
+            0b100001 => Ok(OpCode::LH),
+            0b111000 => Ok(OpCode::SC),
+            0b111100 => Ok(OpCode::SCD),
+            0b100010 => Ok(OpCode::LWL),
+            0b011000 => Ok(OpCode::DADDI),
+            0b110000 => Ok(OpCode::LL),
+            0b000110 => Ok(OpCode::BLEZ),
+            0b111111 => Ok(OpCode::SD),
             0b000001 => OpCode::from_regimm_rt(word),
             0b000000 => OpCode::from_special_inst(word),
             // Last two bits are the co processor #
+            // COP 0 = MMU, COP 1 = FPU, COP 2 = RCP
             0b010000 => OpCode::from_cop0_fmt(word),
-            _        => Err(format!("Unknown CPU Code {:#b} From Word {}", code, word))
+            0b010001 => OpCode::from_cop1_fmt(word),
+            0b010010 => OpCode::from_cop2_fmt(word),
+            0b011111 |
+            0b110010 |
+            0b011100 => Ok(OpCode::UNKNOWN),
+            _        => Err(format!("Unknown CPU Code {:#08b} From Word {}", code, word))
         }
     }
 
@@ -111,11 +158,39 @@ impl OpCode {
         let code = ((word << 6) >> 27) as u8;
 
         match code {
-            0b00100 => Ok(OpCode::MTC0),
             0b00000 => Ok(OpCode::MFC0),
+            0b00100 => Ok(OpCode::MTC0),
             // TODO: Figure out other MMU codes
             _       => Ok(OpCode::MFC0)
-            //_       => Err(format!("Unknown COP0 FMT Code {:#b} From Word {}", code, word))
+            //_       => Err(format!("Unknown COP0 FMT Code {:#07b} From Word {}", code, word))
+        }
+    }
+
+    fn from_cop1_fmt(word: u32) -> Result<OpCode, String> {
+        let code = ((word << 6) >> 27) as u8;
+
+        match code {
+            0b00000 => Ok(OpCode::MFC1),
+            _       => Err(format!("Unknown COP1 FMT Code {:#07b} From Word {}", code, word))
+        }
+    }
+
+    fn from_cop2_fmt(word: u32) -> Result<OpCode, String> {
+        let code = ((word << 6) >> 27) as u8;
+
+        match code {
+            0b00000 => Ok(OpCode::MFC2),
+            0b10001 => OpCode::from_cop2_vec(word),
+            _       => Err(format!("Unknown COP2 FMT Code {:#07b} From Word {}", code, word))
+        }
+    }
+
+    fn from_cop2_vec(word: u32) -> Result<OpCode, String> {
+        let code = ((word << 26) >> 26) as u8;
+
+        match code {
+            0b100010 => Ok(OpCode::VNE),
+            _        => Err(format!("Unknown COP2 VEC Code {:#08b} From Word {}", code, word))
         }
     }
 
@@ -126,7 +201,9 @@ impl OpCode {
             0b00011 => Ok(OpCode::BGEZL),
             0b10001 => Ok(OpCode::BGEZAL),
             0b00000 => Ok(OpCode::BLTZ),
-            _       => Err(format!("Unknown REGIMM RT Code {:#b} From Word {}", code, word))
+            0b10000 => Ok(OpCode::BLTZAL),
+            0b01000 => Ok(OpCode::TGEI),
+            _       => Err(format!("Unknown REGIMM RT Code {:#07b} From Word {}", code, word))
         }
     }
 
@@ -152,7 +229,12 @@ impl OpCode {
             0b000001 => Ok(OpCode::MOVCI),
             0b111111 => Ok(OpCode::DSRA32),
             0b010000 => Ok(OpCode::MFHI),
-            _        => Err(format!("Unknown Special Code {:#b} From Word {}", code, word))
+            0b000011 => Ok(OpCode::SRA),
+            0b001100 => Ok(OpCode::SYSCALL),
+            0b001111 => Ok(OpCode::SYNC),
+            0b111000 => Ok(OpCode::DSLL),
+            0b111110 => Ok(OpCode::DSRL32),
+            _        => Err(format!("Unknown Special Code {:#08b} From Word {}", code, word))
         }
     }
 }
@@ -160,14 +242,14 @@ impl OpCode {
 #[derive(Debug, Copy, Clone)]
 pub struct Instruction {
     code: OpCode,
-    line: u32
+    word: u32
 }
 
 impl Instruction {
     pub fn from_word(word: u32) -> Result<Instruction, String> {
         Ok(Instruction {
             code: OpCode::from_word(word)?,
-            line: word
+            word
         })
     }
 }

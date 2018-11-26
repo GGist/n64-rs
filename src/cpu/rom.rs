@@ -23,7 +23,7 @@ impl Rom {
 
 fn parse_rom(rom: &[u8]) -> IResult<&[u8], Rom> {
     do_parse!(rom,
-        take!(4)        >>
+        tag!(&[0x80, 0x37, 0x12, 0x40])        >>
         clock_rate:      u32!(Endianness::Big) >>
         pc:              u32!(Endianness::Big) >>
         release:         u32!(Endianness::Big) >>
